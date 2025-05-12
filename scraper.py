@@ -174,13 +174,11 @@ def extract_image_urls(soup):
 
 def extract_size_details(soup):
     size_details = []
-    # Find the sizes list container
-    sizes_list = soup.find('ul', class_='css-0')
-    if not sizes_list:
-        return size_details
     
-    # Find all size items
-    size_items = sizes_list.find_all('li', class_='css-rtn8uu')
+    # Find all size items directly, regardless of which panel they're in
+    size_items = soup.find_all('li', class_='css-rtn8uu')
+    print(f"Found {len(size_items)} total size items")  # Debug print
+    
     for item in size_items:
         size_data = {}
         
@@ -188,6 +186,7 @@ def extract_size_details(soup):
         size_link = item.find('a', class_='css-167ftct')
         if size_link:
             size_data['size'] = size_link.find('span', class_='css-1xh1644').text.strip()
+            print(f"Processing size: {size_data['size']}")  # Debug print
         
         price_el = item.find('p', class_='css-1ojavxu')
         if price_el:
@@ -219,6 +218,7 @@ def extract_size_details(soup):
         
         size_details.append(size_data)
     
+    print(f"Returning {len(size_details)} size details")  # Debug print
     return size_details
 
 def rearrange_columns(product_data):

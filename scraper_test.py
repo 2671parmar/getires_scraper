@@ -3,12 +3,68 @@ import requests
 from bs4 import BeautifulSoup
 import time
 import re
+from google.oauth2 import service_account
+from googleapiclient.discovery import build
+from googleapiclient.errors import HttpError
 
 # Test: Only fetch first 5 products from the first brand
 BRANDS_URL = 'https://simpletire.com/brands'
 HEADERS = {
     'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
 }
+
+# If modifying these scopes, delete the file token.json.
+SCOPES = ['https://www.googleapis.com/auth/spreadsheets']
+SPREADSHEET_ID = '1itNviaLE7Ra1Lnq2fyMHJ4GbRN-ADuHexxndaHO5D30'  # Replace with your spreadsheet ID
+
+def get_google_sheets_credentials():
+    """Get Google Sheets API credentials using service account."""
+    try:
+        credentials = service_account.Credentials.from_service_account_file(
+            'credentials.json',
+            scopes=SCOPES
+        )
+        return credentials
+    except Exception as e:
+        print(f"Error loading credentials: {e}")
+        return None
+
+def clear_google_sheet_tab(sheet_name):
+    """Clear all data from a Google Sheet tab."""
+    try:
+        creds = get_google_sheets_credentials()
+        service = build('sheets', 'v4', credentials=creds)
+        service.spreadsheets().values().clear(
+            spreadsheetId=SPREADSHEET_ID,
+            range=f'{sheet_name}!A:Z',
+            body={}
+        ).execute()
+        print(f"Cleared data in {sheet_name} tab.")
+    except HttpError as error:
+        print(f"An error occurred while clearing {sheet_name}: {error}")
+
+def update_google_sheet(data, sheet_name):
+    """Update Google Sheet with scraped data."""
+    try:
+        creds = get_google_sheets_credentials()
+        service = build('sheets', 'v4', credentials=creds)
+        # Convert list of dictionaries to list of lists
+        if data and isinstance(data[0], dict):
+            headers = list(data[0].keys())
+            values = [headers] + [[item.get(header, '') for header in headers] for item in data]
+        else:
+            values = []
+        
+        body = {'values': values}
+        result = service.spreadsheets().values().update(
+            spreadsheetId=SPREADSHEET_ID,
+            range=f'{sheet_name}!A1',
+            valueInputOption='RAW',
+            body=body
+        ).execute()
+        print(f"Updated {result.get('updatedCells')} cells in {sheet_name}")
+    except HttpError as error:
+        print(f"An error occurred: {error}")
 
 def get_first_brand_url():
     response = requests.get(BRANDS_URL, headers=HEADERS)
@@ -94,13 +150,11 @@ def extract_image_urls(soup):
 
 def extract_size_details(soup):
     size_details = []
-    # Find the sizes list container
-    sizes_list = soup.find('ul', class_='css-0')
-    if not sizes_list:
-        return size_details
     
-    # Find all size items
-    size_items = sizes_list.find_all('li', class_='css-rtn8uu')
+    # Find all size items directly, regardless of which panel they're in
+    size_items = soup.find_all('li', class_='css-rtn8uu')
+    print(f"Found {len(size_items)} total size items")  # Debug print
+    
     for item in size_items:
         size_data = {}
         
@@ -108,6 +162,7 @@ def extract_size_details(soup):
         size_link = item.find('a', class_='css-167ftct')
         if size_link:
             size_data['size'] = size_link.find('span', class_='css-1xh1644').text.strip()
+            print(f"Processing size: {size_data['size']}")  # Debug print
         
         price_el = item.find('p', class_='css-1ojavxu')
         if price_el:
@@ -122,7 +177,7 @@ def extract_size_details(soup):
                 label = row.find('th').text.strip().lower()
                 value = row.find('td').text.strip()
                 
-                if label == 'width':  # Changed from 'width' in label to exact match
+                if label == 'width':
                     size_data['width'] = value
                 elif label == 'ratio':
                     size_data['ratio'] = value
@@ -139,6 +194,7 @@ def extract_size_details(soup):
         
         size_details.append(size_data)
     
+    print(f"Returning {len(size_details)} size details")  # Debug print
     return size_details
 
 def rearrange_columns(product_data):
@@ -314,16 +370,22 @@ def main():
     if not brand_url:
         print("No brand found!")
         return
+    
     products = scrape_first_5_products(brand_url)
-    product_count = 0
+    all_products = []
+    
     for product_list in products:
         if product_list:  # Check if the list is not None
-            for product in product_list:
-                product_count += 1
-                print(f"Product {product_count}:")
-                for k, v in product.items():
-                    print(f"  {k}: {v}")
-                print("-"*40)
+            all_products.extend(product_list)
+    
+    if all_products:
+        print(f"Found {len(all_products)} total products (including all sizes)")
+        # Clear and update the Test tab
+        clear_google_sheet_tab('Test')
+        update_google_sheet(all_products, 'Test')
+        print("Results have been written to the 'Test' tab in Google Sheets")
+    else:
+        print("No products found!")
 
 if __name__ == '__main__':
     main() 
