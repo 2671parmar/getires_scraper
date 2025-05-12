@@ -110,11 +110,12 @@ def scrape_brand_products(brand_url, brand_name=None):
             if not product_link or not product_link.get('href'):
                 continue
             product_url = 'https://simpletire.com' + product_link['href']
-            product_data = scrape_product_details(product_url)
-            if product_data:
-                if brand_name:
-                    product_data['brand'] = brand_name
-                products.append(product_data)
+            product_data_list = scrape_product_details(product_url)
+            if product_data_list:
+                for product_data in product_data_list:
+                    if brand_name:
+                        product_data['brand'] = brand_name
+                    products.append(product_data)
             # Increased delay between requests to be more gentle on the server
             time.sleep(5)
         return products
@@ -171,6 +172,93 @@ def extract_image_urls(soup):
     # Limit to 5 URLs if more than 5
     return image_urls[:5]
 
+def extract_size_details(soup):
+    size_details = []
+    # Find the sizes list container
+    sizes_list = soup.find('ul', class_='css-0')
+    if not sizes_list:
+        return size_details
+    
+    # Find all size items
+    size_items = sizes_list.find_all('li', class_='css-rtn8uu')
+    for item in size_items:
+        size_data = {}
+        
+        # Get size and price
+        size_link = item.find('a', class_='css-167ftct')
+        if size_link:
+            size_data['size'] = size_link.find('span', class_='css-1xh1644').text.strip()
+        
+        price_el = item.find('p', class_='css-1ojavxu')
+        if price_el:
+            size_data['price'] = price_el.text.strip()
+        
+        # Get size-specific specs
+        specs_table = item.find('table', class_='css-8bhknh')
+        if specs_table:
+            # Find all rows in the table body
+            spec_rows = specs_table.find('tbody').find_all('tr')
+            for row in spec_rows:
+                label = row.find('th').text.strip().lower()
+                value = row.find('td').text.strip()
+                
+                if label == 'width':
+                    size_data['width'] = value
+                elif label == 'ratio':
+                    size_data['ratio'] = value
+                elif label == 'inflation pressure':
+                    size_data['inflation_pressure'] = value
+                elif label == 'tread depth':
+                    size_data['tread_depth'] = value
+                elif label == 'width range':
+                    size_data['width_range'] = value
+                elif label == 'sidewall':
+                    size_data['sidewall'] = value
+                elif label == 'tread width':
+                    size_data['tread_width'] = value
+        
+        size_details.append(size_data)
+    
+    return size_details
+
+def rearrange_columns(product_data):
+    """Rearrange columns in the desired order"""
+    # Define the desired column order
+    column_order = [
+        'title',
+        'size',
+        'per tire price starts from',
+        'width',
+        'ratio',
+        'inflation_pressure',
+        'tread_depth',
+        'width_range',
+        'sidewall',
+        'tread_width',
+        'simple_score',
+        'category',
+        'vehicle',
+        'mileage_warranty',
+        'load_index',
+        'max_speed',
+        'utqg',
+        'wet_traction',
+        'part_number',
+        'tread_design',
+        'tire_weight',
+        'section_width',
+        'rim_range',
+        'overall_diameter',
+        'image_url1',
+        'image_url2',
+        'image_url3',
+        'image_url4',
+        'image_url5'
+    ]
+    
+    # Create a new dictionary with the desired order
+    return {key: product_data[key] for key in column_order if key in product_data}
+
 def scrape_product_details(product_url):
     headers = {
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
@@ -181,27 +269,25 @@ def scrape_product_details(product_url):
             return None
             
         soup = BeautifulSoup(response.text, 'html.parser')
-        product_data = {
-            'name': '',
-            'per tire price starts from': '',
+        
+        # Get base product data
+        base_product_data = {
+            'title': '',  # Changed from 'name' to 'title'
             'simple_score': '',
             'category': '',
             'vehicle': '',
             'mileage_warranty': '',
             'load_index': '',
             'max_speed': '',
-            'sidewall': '',
             'utqg': '',
             'wet_traction': '',
-            'inflation_pressure': '',
             'part_number': '',
-            'tread_depth': '',
             'tread_design': '',
             'tire_weight': '',
             'section_width': '',
             'rim_range': '',
             'overall_diameter': '',
-            'image_url1': '',  # Added fields for image URLs
+            'image_url1': '',
             'image_url2': '',
             'image_url3': '',
             'image_url4': '',
@@ -211,56 +297,42 @@ def scrape_product_details(product_url):
         # Extract and assign image URLs to individual columns
         image_urls = extract_image_urls(soup)
         for i, url in enumerate(image_urls, 1):
-            product_data[f'image_url{i}'] = url
+            base_product_data[f'image_url{i}'] = url
         
-        # Name
+        # Title (previously name)
         name_el = soup.find('h1', class_='css-1wkv4b1')
         if name_el:
-            product_data['name'] = name_el.text.strip()
-        # Price
-        price_val = ''
-        price_wrapper = soup.find('div', class_='css-1ccm9az')
-        if price_wrapper:
-            price_block = price_wrapper.find('div', class_='css-13qcamq')
-            if price_block:
-                price_p = price_block.find('p', class_='css-1wdv3rw')
-                if price_p:
-                    price_val = price_p.text.strip()
-        # Fallback: search for any $ price in the entire HTML
-        if not price_val:
-            html_text = soup.get_text(separator=' ', strip=True)
-            match = re.search(r'\$[0-9,.]+', html_text)
-            if match:
-                price_val = match.group(0)
-        if price_val:
-            product_data['per tire price starts from'] = price_val
+            base_product_data['title'] = name_el.text.strip()
+        
         # Simple Score
         score_div = soup.find('div', class_='css-1iebk1z')
         if score_div:
             score = score_div.find('p')
             score_rating = score_div.find('p', class_='horizontalScore')
             if score and score_rating:
-                product_data['simple_score'] = f"{score.text.strip()} - {score_rating.text.strip()}"
+                base_product_data['simple_score'] = f"{score.text.strip()} - {score_rating.text.strip()}"
             elif score:
-                product_data['simple_score'] = score.text.strip()
+                base_product_data['simple_score'] = score.text.strip()
+        
         # Category & Vehicle
         catveh_el = soup.find('div', class_='css-1jpc5k3')
         if catveh_el:
             catveh_text = catveh_el.text.strip()
             if ',' in catveh_text:
                 cat, veh = catveh_text.split(',', 1)
-                product_data['category'] = cat.strip()
-                product_data['vehicle'] = veh.replace('tire', '').strip()
+                base_product_data['category'] = cat.strip()
+                base_product_data['vehicle'] = veh.replace('tire', '').strip()
             elif ' tire' in catveh_text.lower():
                 parts = catveh_text.lower().split(' tire')[0].split()
                 if len(parts) > 1:
-                    product_data['category'] = ' '.join(parts[:-1]).title()
-                    product_data['vehicle'] = parts[-1].title()
+                    base_product_data['category'] = ' '.join(parts[:-1]).title()
+                    base_product_data['vehicle'] = parts[-1].title()
                 else:
-                    product_data['category'] = catveh_text.strip()
+                    base_product_data['category'] = catveh_text.strip()
             else:
-                product_data['category'] = catveh_text.strip()
-        # Technical Specs Table
+                base_product_data['category'] = catveh_text.strip()
+        
+        # Technical Specs Table (non-size specific)
         specs_table = soup.find('table', class_='css-ojpigt')
         if specs_table:
             spec_rows = specs_table.find_all('tr', class_='trAsTab')
@@ -271,34 +343,52 @@ def scrape_product_details(product_url):
                     label = label_div.find('span').text.strip().lower()
                     value = value_div.get_text(separator=' ', strip=True)
                     if 'mileage warranty' in label:
-                        product_data['mileage_warranty'] = value
+                        base_product_data['mileage_warranty'] = value
                     elif 'load index' in label:
-                        product_data['load_index'] = value
+                        base_product_data['load_index'] = value
                     elif 'max speed' in label:
-                        product_data['max_speed'] = value
-                    elif 'sidewall' in label:
-                        product_data['sidewall'] = value
+                        base_product_data['max_speed'] = value
                     elif 'utqg' in label:
-                        product_data['utqg'] = value
+                        base_product_data['utqg'] = value
                     elif 'wet traction' in label:
-                        product_data['wet_traction'] = value
-                    elif 'inflation pressure' in label:
-                        product_data['inflation_pressure'] = value
+                        base_product_data['wet_traction'] = value
                     elif 'part number' in label:
-                        product_data['part_number'] = value
-                    elif 'tread depth' in label:
-                        product_data['tread_depth'] = value
+                        base_product_data['part_number'] = value
                     elif 'tread design' in label:
-                        product_data['tread_design'] = value
+                        base_product_data['tread_design'] = value
                     elif 'tire weight' in label:
-                        product_data['tire_weight'] = value
+                        base_product_data['tire_weight'] = value
                     elif 'section width' in label:
-                        product_data['section_width'] = value
+                        base_product_data['section_width'] = value
                     elif 'rim range' in label:
-                        product_data['rim_range'] = value
+                        base_product_data['rim_range'] = value
                     elif 'overall diameter' in label:
-                        product_data['overall_diameter'] = value
-        return product_data
+                        base_product_data['overall_diameter'] = value
+        
+        # Get size-specific details
+        size_details = extract_size_details(soup)
+        
+        # Create a list of products, one for each size
+        products = []
+        for size_data in size_details:
+            product_data = base_product_data.copy()
+            # Append size to title
+            product_data['title'] = f"{product_data['title']} - {size_data['size']}"
+            # Add size-specific fields
+            product_data['size'] = size_data['size']
+            product_data['per tire price starts from'] = size_data.get('price', '')
+            product_data['width'] = size_data.get('width', '')
+            product_data['ratio'] = size_data.get('ratio', '')
+            product_data['inflation_pressure'] = size_data.get('inflation_pressure', '')
+            product_data['tread_depth'] = size_data.get('tread_depth', '')
+            product_data['width_range'] = size_data.get('width_range', '')
+            product_data['sidewall'] = size_data.get('sidewall', '')
+            product_data['tread_width'] = size_data.get('tread_width', '')
+            # Rearrange columns
+            product_data = rearrange_columns(product_data)
+            products.append(product_data)
+        
+        return products
     except Exception as e:
         print(f"Error scraping product details: {e}")
         return None
